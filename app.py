@@ -18,31 +18,34 @@ def health_check():
 def scrape_vinted_user(username):
     """Scrape a Vinted user's products"""
     try:
+        # Save current working directory
+        original_cwd = os.getcwd()
+        
         # Create temporary directory for this scrape
         temp_dir = tempfile.mkdtemp()
-        db_path = os.path.join(temp_dir, 'scraped_data.db')
+        
+        try:
+            # Change to temp directory
+            os.chdir(temp_dir)
+            
+            # Create users.txt with the username
+            with open('users.txt', 'w') as f:
+                f.write(f"{username}\n")
 
-        # Create users.txt with the username
-        users_file = os.path.join(temp_dir, 'users.txt')
-        with open(users_file, 'w') as f:
-            f.write(f"{username}\n")
+            # Run the scraper (it expects to run in directory with users.txt)
+            cmd = ['python', os.path.join(original_cwd, 'scraper.py')]
 
-        # Run the scraper
-        cmd = [
-            'python', 'scraper.py',
-            '--vinted',
-            '--users', users_file,
-            '--database', db_path,
-            '--no-images'  # Don't download images for API response
-        ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode != 0:
+                raise Exception(f"Scraper failed: {result.stderr}")
 
-        if result.returncode != 0:
-            raise Exception(f"Scraper failed: {result.stderr}")
-
-        # Read data from SQLite database
-        products = read_products_from_db(db_path, username)
+            # Read data from SQLite database (scraper creates data.sqlite)
+            products = read_products_from_db('data.sqlite', username)
+            
+        finally:
+            # Always restore original working directory
+            os.chdir(original_cwd)
 
         # Clean up
         shutil.rmtree(temp_dir)
@@ -77,45 +80,46 @@ def read_products_from_db(db_path, username):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Query products for the user
+        # Query products from the Data table (actual scraper table)
         cursor.execute("""
-            SELECT title, price, currency, size, brand, condition, 
-                   category, description, color, material, image_urls
-            FROM products 
-            WHERE user_id = ? OR username = ?
-            ORDER BY id
-        """, (username, username))
+            SELECT ID, Title, Description, Price, Size, Brand, State, 
+                   Category, Colors, Images, Url
+            FROM Data 
+            WHERE User_id = ?
+            ORDER BY ID
+        """, (username,))
 
         rows = cursor.fetchall()
 
         for row in rows:
-            title, price, currency, size, brand, condition, category, description, color, material, image_urls = row
+            item_id, title, description, price, size, brand, condition, category, colors, images, url = row
 
-            # Parse image URLs (assuming they're stored as JSON or comma-separated)
+            # Parse image URLs 
             try:
-                if image_urls:
-                    if image_urls.startswith('['):
-                        urls = json.loads(image_urls)
+                if images:
+                    if images.startswith('http'):
+                        urls = [images]  # Single URL
                     else:
-                        urls = image_urls.split(',')
+                        urls = images.split(',') if ',' in images else [images]
                 else:
                     urls = []
             except:
                 urls = []
 
             products.append({
-                'id': f"{username}_{len(products)}",
+                'id': str(item_id),
                 'title': title or '',
                 'description': description or '',
                 'price': float(price) if price else 0.0,
-                'currency': currency or 'EUR',
+                'currency': 'EUR',  # Vinted typically uses EUR
                 'size': size or '',
                 'brand': brand or '',
                 'condition': condition or '',
                 'category': category or '',
-                'color': color or '',
-                'material': material or '',
+                'color': colors or '',
+                'material': '',  # Not in scraper DB
                 'imageUrls': urls,
+                'url': url or '',
                 'isSelected': True  # Default to selected for Flutter app
             })
 
