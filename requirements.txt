@@ -1,0 +1,11 @@
+cloudscraper==1.2.66
+requests==2.27.1
+selenium
+beautifulsoup4
+lxml
+Pillow
+fake-useragent
+pytz
+flask==2.3.3
+flask-cors==4.0.0
+gunicorn==21.2.0
